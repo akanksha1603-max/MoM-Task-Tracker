@@ -115,6 +115,8 @@
       </select>
       <button class="btn sm" id="clearFiltersBtn">Clear filters</button>
       <button class="btn sm" id="clearAllTasksBtn" style="color:var(--red);border-color:var(--red);">Clear entire tracker</button>
+      <button class="btn sm" id="importBtn">⬆ Import previous file</button>
+      <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none;">
       <button class="btn sm" id="exportBtn" style="margin-left:auto;">⬇ Export as CSV</button>
     </div>
     <div id="trackerTableWrap"></div>
@@ -572,6 +574,78 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   a.href = URL.createObjectURL(blob);
   a.download = 'mom_task_tracker.csv';
   a.click();
+});
+/* Parses CSV respecting quoted fields (so a comma or quote inside a task
+   description doesn't break the row) — matches exactly what this tool's own
+   "Export as CSV" produces, so importing your own previous export round-trips
+   cleanly. */
+function parseCsv(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field = ''; }
+      else if(c === '\n' || c === '\r'){
+        if(field !== '' || row.length){ row.push(field); rows.push(row); row = []; field = ''; }
+        if(c === '\r' && text[i+1] === '\n') i++;
+      } else field += c;
+    }
+  }
+  if(field !== '' || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=> r.some(c=>c.trim()!==''));
+}
+
+document.getElementById('importBtn').addEventListener('click', ()=>{
+  document.getElementById('importFileInput').click();
+});
+document.getElementById('importFileInput').addEventListener('change', async function(){
+  const file = this.files[0];
+  if(!file) return;
+  this.value = ''; // allow re-selecting the same file later
+  try{
+    const text = await file.text();
+    const rows = parseCsv(text);
+    if(!rows.length){ toast('That file appears to be empty.'); return; }
+
+    const headerRow = rows[0].map(h=>h.trim().toLowerCase());
+    const col = name => headerRow.findIndex(h=>h===name);
+    const meetingCol = col('meeting'), taskCol = col('task summary'), ownerCol = col('owner'),
+          dueCol = col('due date'), statusCol = col('status'), notesCol = col('notes');
+    if(taskCol === -1){ toast('Could not find a "Task Summary" column — is this a file exported from this tracker?'); return; }
+
+    await loadTasks(); // make sure we're comparing against the latest shared state
+    const existingKeys = new Set(tasks.map(t=>[t.meeting,t.task,t.owner].map(v=>(v||'').trim().toLowerCase()).join('||')));
+    let added = 0, skipped = 0;
+    for(let i=1;i<rows.length;i++){
+      const r = rows[i];
+      const task = (r[taskCol]||'').trim();
+      if(!task) continue;
+      const meeting = meetingCol>-1 ? (r[meetingCol]||'').trim() : '';
+      const owner = ownerCol>-1 ? (r[ownerCol]||'').trim() : '';
+      const key = [meeting, task, owner].map(v=>v.toLowerCase()).join('||');
+      if(existingKeys.has(key)){ skipped++; continue; } // already in the tracker — don't duplicate
+      existingKeys.add(key);
+      tasks.push({
+        id: uid(), meeting, task, owner,
+        dueDate: dueCol>-1 ? (r[dueCol]||'').trim() : '',
+        status: statusCol>-1 && ['Open','In Progress','Done','Blocked'].includes((r[statusCol]||'').trim()) ? r[statusCol].trim() : 'Open',
+        notes: notesCol>-1 ? (r[notesCol]||'').trim() : ''
+      });
+      added++;
+    }
+    await saveTasks();
+    renderTracker();
+    toast(`Imported ${added} task(s)${skipped ? `, skipped ${skipped} already in the tracker` : ''}.`);
+  }catch(e){
+    toast('Could not read that file — make sure it\'s a CSV exported from this tracker.');
+  }
 });
 
 loadTasks();
