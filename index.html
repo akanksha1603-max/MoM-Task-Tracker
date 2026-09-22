@@ -210,9 +210,11 @@ async function loadTasks(){
     if(HAS_ARTIFACT_STORAGE){
       const res = await window.storage.get(STORAGE_KEY, true);
       tasks = res && res.value ? JSON.parse(res.value) : [];
+      lastSavedSnapshot = res && res.value ? res.value : '[]';
     } else {
       const raw = localStorage.getItem(STORAGE_KEY);
       tasks = raw ? JSON.parse(raw) : [];
+      lastSavedSnapshot = raw || '[]';
     }
   }catch(e){
     tasks = [];
@@ -226,13 +228,41 @@ async function saveTasks(){
     } else {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
     }
+    lastSavedSnapshot = JSON.stringify(tasks);
   }catch(e){
     toast('Could not save — will retry on next change');
   }
 }
 // Poll for changes from other viewers every few seconds so updates show up live
-// without needing a manual refresh.
-setInterval(loadTasks, 4000);
+// without needing a manual refresh. Rebuilding the whole table mid-edit steals
+// focus and drops keystrokes, so while any tracker field is focused we fetch
+// the latest data but hold off re-rendering — and skip re-rendering entirely
+// if nothing actually changed, since that's the common case every 4s.
+let lastSavedSnapshot = '';
+let isEditingField = false;
+document.getElementById('trackerTableWrap').addEventListener('focusin', e=>{
+  if(e.target.matches('.tk-task, .tk-notes, .tk-status')) isEditingField = true;
+});
+document.getElementById('trackerTableWrap').addEventListener('focusout', e=>{
+  if(e.target.matches('.tk-task, .tk-notes, .tk-status')) isEditingField = false;
+});
+async function pollTasks(){
+  try{
+    let latest;
+    if(HAS_ARTIFACT_STORAGE){
+      const res = await window.storage.get(STORAGE_KEY, true);
+      latest = res && res.value ? res.value : '[]';
+    } else {
+      latest = localStorage.getItem(STORAGE_KEY) || '[]';
+    }
+    if(latest === lastSavedSnapshot) return; // nothing changed, don't touch the DOM
+    if(isEditingField) return; // don't yank focus out from under an active edit — next poll will pick it up
+    tasks = JSON.parse(latest);
+    lastSavedSnapshot = latest;
+    renderTracker();
+  }catch(e){ /* ignore a transient poll failure, next tick retries */ }
+}
+setInterval(pollTasks, 4000);
 
 /* ---------- Task extraction heuristics ---------- */
 const BULLET_RE = /^[-*•]\s+|^\d+[.)]\s+|^\(?[a-hA-H][.)]\s+/;
