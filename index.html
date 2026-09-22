@@ -41,6 +41,9 @@
   tr.row-done td{background:#EAF7F0;}
   tr.row-done:hover td{background:#DCF1E4;}
   tr.row-done td:nth-child(2){color:var(--green);}
+  textarea.tk-task{border:1px solid transparent;background:transparent;padding:2px 4px;margin:-2px -4px;resize:none;overflow:hidden;white-space:pre-wrap;line-height:1.4;min-width:220px;}
+  textarea.tk-task:hover{border-color:var(--line-strong);}
+  textarea.tk-task:focus{border-color:var(--accent);background:#fff;}
   .review-row{display:grid;grid-template-columns:24px 2fr 1fr 1fr auto;gap:8px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line);}
   .review-row:last-child{border-bottom:none;}
   .review-row textarea{resize:vertical;min-height:36px;}
@@ -511,7 +514,7 @@ function renderTracker(){
     ${sorted.map(t=>`
       <tr data-id="${t.id}" class="${t.status==='Done' ? 'row-done' : ''}">
         <td><span class="meeting-tag">${escapeHtml(t.meeting)}</span></td>
-        <td>${escapeHtml(t.task)}</td>
+        <td><textarea class="tk-task" rows="1" placeholder="Task summary…">${escapeHtml(t.task)}</textarea></td>
         <td>${escapeHtml(t.owner)||'—'}</td>
         <td>${escapeHtml(t.dueDate)||'—'}</td>
         <td>
@@ -532,6 +535,16 @@ function renderTracker(){
     });
     row.querySelector('.tk-notes').addEventListener('change', async function(){
       const t = tasks.find(x=>x.id===id); if(t){ t.notes = this.value; await saveTasks(); }
+    });
+    const taskArea = row.querySelector('.tk-task');
+    const autoGrow = el => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+    autoGrow(taskArea);
+    taskArea.addEventListener('input', function(){ autoGrow(this); });
+    taskArea.addEventListener('change', async function(){
+      const val = this.value.trim();
+      if(!val){ toast('Task summary can\'t be empty.'); this.value = tasks.find(x=>x.id===id)?.task || ''; autoGrow(this); return; }
+      const t = tasks.find(x=>x.id===id); if(t){ t.task = val; await saveTasks(); }
+      autoGrow(this);
     });
     row.querySelector('.tk-delete').addEventListener('click', async function(){
       const ok = await customConfirm('Remove this task from the tracker?');
